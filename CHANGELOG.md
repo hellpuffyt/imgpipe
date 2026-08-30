@@ -5,6 +5,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Pipeline stage numeric parsing (`gaussian=2.0`, `contrast=1.1`, `--threshold`,
+  and the benchmark JSON reader) used `std::stod`/`std::stoi`, which defer to
+  the C library's `strtod`/`strtol` and are therefore sensitive to the
+  process's current C locale. Under a locale where `,` is the decimal
+  separator, parsing a value like `2.0` stopped at the `.` and the
+  "was the whole string consumed" check then threw for perfectly valid
+  input -- on at least one CI configuration this happened outside any
+  `CHECK_THROWS`, in ordinary pipeline application code, and crashed the
+  entire test binary before any output was printed. Parsing now goes
+  through `std::from_chars`, which is locale-independent by design; added
+  a regression test that exercises the parser under a comma-decimal locale.
+- `stb_image_write.h` uses `sprintf`, which some platform SDKs mark
+  deprecated; the existing scoped warning relaxation for the vendored-code
+  translation unit now also covers `-Wno-deprecated-declarations`, so it no
+  longer trips a `-Werror` build on those platforms without weakening
+  warnings anywhere else in the project.
+
 ## [0.1.0] - 2026-08-30
 
 ### Added

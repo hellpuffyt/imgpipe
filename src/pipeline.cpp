@@ -3,7 +3,6 @@
 #include <array>
 #include <cctype>
 #include <charconv>
-#include <sstream>
 #include <stdexcept>
 
 #include "imgpipe/ops.hpp"
@@ -39,32 +38,38 @@ std::string trim(const std::string& s) {
     return s.substr(start, end - start);
 }
 
+// std::stod/std::stoi ultimately defer to the C library's strtod/strtol,
+// whose notion of "digit" and decimal-point character follows the
+// process's current C locale. That makes them unsuitable for parsing a
+// command-line mini-language: a locale where the decimal separator is ','
+// (e.g. de_DE) would make std::stod stop consuming at the '.' in "2.0",
+// which our "fully consumed" check then (correctly, but confusingly)
+// rejects -- or worse, silently accepts a different value than the user
+// typed. std::from_chars is specified to be locale-independent (it always
+// uses '.'  as the decimal point and never groups digits), so it is used
+// here instead.
 double parseDouble(const std::string& text, const std::string& stageRaw, const std::string& what) {
-    try {
-        std::size_t consumed = 0;
-        double value = std::stod(text, &consumed);
-        if (consumed != text.size()) {
-            throw std::invalid_argument("");
-        }
-        return value;
-    } catch (const std::exception&) {
+    double value = 0.0;
+    const auto* begin = text.data();
+    const auto* end = text.data() + text.size();
+    const auto result = std::from_chars(begin, end, value);
+    if (result.ec != std::errc() || result.ptr != end) {
         throw std::invalid_argument("invalid pipeline stage '" + stageRaw + "': expected a " +
                                      "numeric value for " + what + ", got '" + text + "'");
     }
+    return value;
 }
 
 int parseInt(const std::string& text, const std::string& stageRaw, const std::string& what) {
-    try {
-        std::size_t consumed = 0;
-        int value = std::stoi(text, &consumed);
-        if (consumed != text.size()) {
-            throw std::invalid_argument("");
-        }
-        return value;
-    } catch (const std::exception&) {
+    int value = 0;
+    const auto* begin = text.data();
+    const auto* end = text.data() + text.size();
+    const auto result = std::from_chars(begin, end, value);
+    if (result.ec != std::errc() || result.ptr != end) {
         throw std::invalid_argument("invalid pipeline stage '" + stageRaw + "': expected an " +
                                      "integer value for " + what + ", got '" + text + "'");
     }
+    return value;
 }
 
 std::pair<int, int> parseDimensions(const std::string& text, const std::string& stageRaw) {

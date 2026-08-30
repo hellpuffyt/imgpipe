@@ -53,10 +53,11 @@ target_link_libraries(imgpipe_core PUBLIC imgpipe_sanitizers)
 
 # stb's implementation files trip -Wpedantic/-Wextra warnings that are not
 # ours to fix; relax warnings specifically for the translation unit that
-# includes them.
+# includes them. -Wno-deprecated-declarations covers stb_image_write.h's
+# use of sprintf(), which only the macOS SDK (not glibc) marks deprecated.
 if(NOT MSVC)
   set_source_files_properties(src/image.cpp PROPERTIES
-    COMPILE_OPTIONS "-Wno-unused-function;-Wno-missing-field-initializers"
+    COMPILE_OPTIONS "-Wno-unused-function;-Wno-missing-field-initializers;-Wno-deprecated-declarations"
   )
 endif()
 

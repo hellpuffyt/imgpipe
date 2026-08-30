@@ -85,3 +85,17 @@ inline void reportFailure(const std::string& expr, const std::string& file, int 
             ::imgpipe::test::reportFailure(#expr " to throw", __FILE__, __LINE__);                 \
         }                                                                                            \
     } while (0)
+
+#define CHECK_NOTHROW(expr)                                                                         \
+    do {                                                                                           \
+        ++::imgpipe::test::assertionCount();                                                       \
+        try {                                                                                       \
+            (void)(expr);                                                                            \
+        } catch (const std::exception& imgpipe_ex) {                                                \
+            ::imgpipe::test::reportFailure(                                                         \
+                std::string(#expr) + " not to throw, but it threw: " + imgpipe_ex.what(),           \
+                __FILE__, __LINE__);                                                                 \
+        } catch (...) {                                                                             \
+            ::imgpipe::test::reportFailure(std::string(#expr) + " not to throw", __FILE__, __LINE__); \
+        }                                                                                            \
+    } while (0)

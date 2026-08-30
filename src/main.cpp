@@ -1,3 +1,4 @@
+#include <charconv>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -101,7 +102,17 @@ Args parseArgs(int argc, char** argv) {
         } else if (tok == "--baseline") {
             args.baseline = next();
         } else if (tok == "--threshold") {
-            args.threshold = std::stod(next());
+            const std::string value = next();
+            double threshold = 0.0;
+            // std::from_chars is locale-independent, unlike std::stod;
+            // see the comment on parseDouble() in pipeline.cpp for why
+            // that matters here.
+            const auto result =
+                std::from_chars(value.data(), value.data() + value.size(), threshold);
+            if (result.ec != std::errc() || result.ptr != value.data() + value.size()) {
+                throw std::invalid_argument("invalid --threshold value '" + value + "'");
+            }
+            args.threshold = threshold;
         } else if (tok == "--help" || tok == "-h") {
             args.help = true;
         } else {

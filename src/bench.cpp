@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -202,7 +203,15 @@ private:
         if (token == "inf" || token == "+inf") {
             return std::numeric_limits<double>::infinity();
         }
-        return std::stod(token);
+        // std::from_chars is locale-independent (always '.' as the decimal
+        // point), unlike std::stod, which defers to the C library's
+        // strtod and therefore the process's current C locale.
+        double value = 0.0;
+        const auto result = std::from_chars(token.data(), token.data() + token.size(), value);
+        if (result.ec != std::errc()) {
+            throw std::runtime_error("parseJson: malformed number '" + token + "'");
+        }
+        return value;
     }
 
     std::string readString(std::size_t pos) const {
