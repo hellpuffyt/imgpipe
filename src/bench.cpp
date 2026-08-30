@@ -41,6 +41,16 @@ double megapixels(long width, long height) {
     return static_cast<double>(width) * static_cast<double>(height) / 1'000'000.0;
 }
 
+// A single application of a cheap stage on a small image can complete in
+// far less than one clock tick, especially on a coarse-resolution
+// steady_clock. Measuring that as "0 seconds" and then dividing by it
+// produces a meaningless "infinite" throughput. Instead, re-apply the
+// stage until the *cumulative* time clears this floor, then average --
+// several real, summed measurements are trustworthy even if any single one
+// individually is not.
+constexpr double kMinMeasurableSeconds = 0.002; // 2 ms
+constexpr int kMaxMeasurementIterations = 200'000;
+
 } // namespace
 
 BenchReport runBenchmark(const Image& src, const std::string& spec) {
@@ -51,18 +61,35 @@ BenchReport runBenchmark(const Image& src, const std::string& spec) {
     for (const Stage& stage : parseOps(spec)) {
         const long inW = current.width();
         const long inH = current.height();
-        const auto start = std::chrono::steady_clock::now();
-        current = applyStage(current, stage);
-        const auto end = std::chrono::steady_clock::now();
 
-        const double seconds = std::chrono::duration<double>(end - start).count();
+        Image output;
+        int iterations = 0;
+        double elapsedSeconds = 0.0;
+        const auto batchStart = std::chrono::steady_clock::now();
+        do {
+            output = applyStage(current, stage);
+            ++iterations;
+            elapsedSeconds =
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - batchStart)
+                    .count();
+        } while (elapsedSeconds < kMinMeasurableSeconds && iterations < kMaxMeasurementIterations);
+        current = std::move(output);
+
         StageResult result;
         result.stageRaw = stage.raw;
-        result.wallSeconds = seconds;
         result.inputWidth = inW;
         result.inputHeight = inH;
-        result.megapixelsPerSecond = seconds > 0.0 ? megapixels(inW, inH) / seconds
-                                                     : std::numeric_limits<double>::infinity();
+        if (elapsedSeconds > 0.0) {
+            result.wallSeconds = elapsedSeconds / static_cast<double>(iterations);
+            result.megapixelsPerSecond = megapixels(inW, inH) / result.wallSeconds;
+        } else {
+            // Even kMaxMeasurementIterations repetitions stayed at zero
+            // measured time: genuinely unmeasurable on this clock, not a
+            // stage that is "infinitely fast". Say so explicitly rather
+            // than reporting a number.
+            result.wallSeconds = 0.0;
+            result.megapixelsPerSecond = std::numeric_limits<double>::quiet_NaN();
+        }
         report.stages.push_back(result);
     }
 
@@ -81,9 +108,20 @@ std::string toJson(const BenchReport& report) {
     out << "  \"stages\": [\n";
     for (std::size_t i = 0; i < report.stages.size(); ++i) {
         const StageResult& s = report.stages[i];
+        // JSON has no infinity/NaN literal. operator<< would emit the
+        // literal text "inf"/"nan" for a non-finite double, which is not
+        // valid JSON and which nothing (including our own parser) can
+        // read back as a number -- so a non-finite (unmeasurable)
+        // throughput is written as `null` instead, the honest "no value"
+        // encoding.
         out << "    {\"stageRaw\": \"" << s.stageRaw << "\", \"wallSeconds\": " << s.wallSeconds
-            << ", \"megapixelsPerSecond\": " << s.megapixelsPerSecond
-            << ", \"inputWidth\": " << s.inputWidth << ", \"inputHeight\": " << s.inputHeight
+            << ", \"megapixelsPerSecond\": ";
+        if (std::isfinite(s.megapixelsPerSecond)) {
+            out << s.megapixelsPerSecond;
+        } else {
+            out << "null";
+        }
+        out << ", \"inputWidth\": " << s.inputWidth << ", \"inputHeight\": " << s.inputHeight
             << "}";
         if (i + 1 != report.stages.size()) {
             out << ",";
@@ -102,7 +140,11 @@ std::vector<Regression> compareToBaseline(const BenchReport& baseline, const Ben
     for (std::size_t i = 0; i < n; ++i) {
         const StageResult& b = baseline.stages[i];
         const StageResult& c = current.stages[i];
-        if (b.megapixelsPerSecond <= 0.0 || !std::isfinite(b.megapixelsPerSecond)) {
+        // A non-finite (unmeasurable) throughput on either side carries no
+        // usable signal: skip the stage rather than comparing against, or
+        // producing, a meaningless number.
+        if (b.megapixelsPerSecond <= 0.0 || !std::isfinite(b.megapixelsPerSecond) ||
+            !std::isfinite(c.megapixelsPerSecond)) {
             continue;
         }
         const double percentSlower =
@@ -192,17 +234,39 @@ private:
     }
 
     double readNumber(std::size_t pos) const {
+        // `null` is how toJson() encodes a non-finite (unmeasurable)
+        // value -- JSON has no infinity/NaN literal. Recognize whole-token
+        // literals (null, and the legacy inf/+inf/-inf spellings some
+        // older baseline files may still contain) by direct comparison
+        // *before* falling into the digit-class scan below: that scan's
+        // loop condition can only ever match a single "inf" at its
+        // starting position (text_.compare(end, 3, "inf") is only true
+        // while end == pos), so it never actually advances past the
+        // first letter of a bare "inf"/"null" token on its own.
+        for (const char* literal : {"null"}) {
+            const std::size_t len = std::char_traits<char>::length(literal);
+            if (text_.compare(pos, len, literal) == 0) {
+                return std::numeric_limits<double>::quiet_NaN();
+            }
+        }
+        for (const char* literal : {"+inf", "-inf", "inf"}) {
+            const std::size_t len = std::char_traits<char>::length(literal);
+            if (text_.compare(pos, len, literal) == 0) {
+                // Accepted for backward compatibility with baseline files
+                // written before non-finite throughput was encoded as
+                // `null`; toJson() itself never emits this anymore.
+                return literal[0] == '-' ? -std::numeric_limits<double>::infinity()
+                                          : std::numeric_limits<double>::infinity();
+            }
+        }
+
         std::size_t end = pos;
         while (end < text_.size() &&
                (std::isdigit(static_cast<unsigned char>(text_[end])) || text_[end] == '-' ||
-                text_[end] == '+' || text_[end] == '.' || text_[end] == 'e' || text_[end] == 'E' ||
-                text_.compare(end, 3, "inf") == 0)) {
+                text_[end] == '+' || text_[end] == '.' || text_[end] == 'e' || text_[end] == 'E')) {
             ++end;
         }
         const std::string token = text_.substr(pos, end - pos);
-        if (token == "inf" || token == "+inf") {
-            return std::numeric_limits<double>::infinity();
-        }
         // std::from_chars is locale-independent (always '.' as the decimal
         // point), unlike std::stod, which defers to the C library's
         // strtod and therefore the process's current C locale.

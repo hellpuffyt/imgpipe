@@ -1,4 +1,5 @@
 #include <charconv>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -144,8 +145,13 @@ int main(int argc, char** argv) {
 
             std::cout << "Stage throughput (input megapixels/second):\n";
             for (const auto& stage : report.stages) {
-                std::cout << "  " << stage.stageRaw << ": " << stage.megapixelsPerSecond
-                          << " Mpix/s (" << stage.wallSeconds * 1000.0 << " ms, input "
+                std::cout << "  " << stage.stageRaw << ": ";
+                if (std::isfinite(stage.megapixelsPerSecond)) {
+                    std::cout << stage.megapixelsPerSecond << " Mpix/s";
+                } else {
+                    std::cout << "(unmeasurable)";
+                }
+                std::cout << " (" << stage.wallSeconds * 1000.0 << " ms, input "
                           << stage.inputWidth << "x" << stage.inputHeight << ")\n";
             }
             std::cout << "Total wall time: " << report.totalWallSeconds * 1000.0 << " ms\n";

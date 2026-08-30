@@ -25,6 +25,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   translation unit now also covers `-Wno-deprecated-declarations`, so it no
   longer trips a `-Werror` build on those platforms without weakening
   warnings anywhere else in the project.
+- A stage that measured (or was constructed with) zero wall-clock time was
+  encoded as throughput = +infinity; `toJson()` wrote that out via
+  `operator<<` as the bare word `inf`, which is not valid JSON, and
+  `parseJson()`'s number scanner could only ever match the first letter of
+  that token, so it threw `malformed number 'i'` -- meaning a benchmark
+  report the tool itself produced could not always be read back by the
+  tool. Fixed in two parts: (1) a stage is now re-applied until cumulative
+  measured time clears a 2 ms floor and the result is averaged over that
+  batch, so "too fast to measure" is rare in practice; (2) when throughput
+  genuinely cannot be measured, it is encoded as JSON `null` (there is no
+  JSON infinity/NaN literal) rather than as a literal that isn't valid
+  JSON, and `parseJson()` reads `null` back as a non-finite value
+  correctly. `compareToBaseline` now also skips a stage when the *current*
+  run's throughput is non-finite (it already skipped on a non-finite
+  baseline), keeping the two encodings coherent. Added round-trip
+  regression tests, including one that reproduces the exact original
+  failure (a zero-duration stage through `toJson`/`parseJson`).
 
 ## [0.1.0] - 2026-08-30
 

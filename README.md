@@ -150,24 +150,48 @@ pipeline `resize=1920x1440:box,gaussian=2.0,gray,brightness=10,contrast=1.1,conv
 
 | Stage | Input size | Time | Throughput |
 |---|---|---|---|
-| `resize=1920x1440:box` | 4000x3000 | 135.1 ms | 88.8 Mpix/s |
-| `gaussian=2.0` | 1920x1440 | 202.9 ms | 13.6 Mpix/s |
-| `gray` | 1920x1440 | 7.5 ms | 367.2 Mpix/s |
-| `brightness=10` | 1920x1440 | 9.7 ms | 284.4 Mpix/s |
-| `contrast=1.1` | 1920x1440 | 9.5 ms | 290.5 Mpix/s |
-| `convolve=sharpen` | 1920x1440 | 19.7 ms | 140.1 Mpix/s |
-| `flip=h` | 1920x1440 | 2.3 ms | 1217.0 Mpix/s |
-| `rotate=90` | 1920x1440 | 2.3 ms | 1192.0 Mpix/s |
+| `resize=1920x1440:box` | 4000x3000 | 127.3 ms | 94.3 Mpix/s |
+| `gaussian=2.0` | 1920x1440 | 193.8 ms | 14.3 Mpix/s |
+| `gray` | 1920x1440 | 7.6 ms | 364.6 Mpix/s |
+| `brightness=10` | 1920x1440 | 9.6 ms | 287.9 Mpix/s |
+| `contrast=1.1` | 1920x1440 | 9.2 ms | 299.7 Mpix/s |
+| `convolve=sharpen` | 1920x1440 | 20.5 ms | 135.0 Mpix/s |
+| `flip=h` | 1920x1440 | 2.1 ms | 1287.4 Mpix/s |
+| `rotate=90` | 1920x1440 | 2.1 ms | 1318.3 Mpix/s |
 
-Total wall time: 389.2 ms. Peak resident memory: 80.1 MiB.
+Total wall time: 373.6 ms. Peak resident memory: 80.1 MiB.
 
 These numbers are what one Docker container run produced, not aspirational
-figures -- expect variance run to run and machine to machine. The Gaussian
-blur is deliberately the slowest per-pixel stage here (radius scales with
-sigma, and this run uses sigma=2.0, i.e. a 13-pixel-wide 1D kernel run
-twice); that's the separable algorithm doing real work, not a regression.
+figures -- expect variance run to run and machine to machine (a second run
+against the same baseline in the same container showed several stages 15-30%
+off from these, purely from container scheduling noise, not a real
+regression -- see the note on `--threshold` below). The Gaussian blur is
+deliberately the slowest per-pixel stage here (radius scales with sigma, and
+this run uses sigma=2.0, i.e. a 13-pixel-wide 1D kernel run twice); that's
+the separable algorithm doing real work, not a regression.
+
+**How a stage is timed.** Each stage is timed individually with a monotonic
+clock. If a single application completes in well under a couple of
+milliseconds -- a small image, a cheap stage, a fast machine, or just a
+clock with coarse resolution -- that one sample is dominated by measurement
+noise, not the stage's actual cost. So imgpipe re-applies the stage
+(discarding all but the last result, to keep the pipeline's output correct)
+until the *cumulative* elapsed time clears a 2 ms floor, and reports the
+per-application average over that batch. `wallSeconds` and
+`megapixelsPerSecond` in the JSON report are therefore always an average
+over one or more real, summed measurements, never a single sub-tick sample.
+If even that fails to clear the floor, the stage's throughput is reported as
+`null` in JSON (there is no JSON infinity/NaN literal) and printed as
+`(unmeasurable)` on the console -- never as a fabricated number, and never
+as "infinitely fast". `compareToBaseline` skips a stage on either side of
+the comparison when its throughput is unmeasurable, rather than comparing
+against, or reporting a regression against, a number that isn't real.
+
 Use `--bench --bench-out` to capture your own baseline and `--baseline` to
-gate future changes against it.
+gate future changes against it; because run-to-run variance on a shared or
+virtualized machine (like a CI runner) can easily exceed 15-20% on fast,
+small stages, pick `--threshold` with that noise floor in mind rather than
+treating it as a tight tolerance.
 
 ## Testing
 
