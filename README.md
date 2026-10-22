@@ -134,6 +134,8 @@ imgpipe --in photo.png --out out.png \
 imgpipe --in photo.png --ops "resize=1920x1440:box,gaussian=2.0,gray" --bench
 
 # Save a baseline, then fail CI if a later change regresses more than 15%
+# (--bench-out does not create directories)
+mkdir -p benchmarks
 imgpipe --in photo.png --ops "resize=1920x1440:box,gaussian=2.0" --bench \
   --bench-out benchmarks/baseline.json
 imgpipe --in photo.png --ops "resize=1920x1440:box,gaussian=2.0" --bench \
