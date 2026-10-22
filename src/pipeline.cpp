@@ -3,6 +3,7 @@
 #include <array>
 #include <cctype>
 #include <charconv>
+#include <cmath>
 #include <stdexcept>
 
 #include "imgpipe/ops.hpp"
@@ -53,7 +54,7 @@ double parseDouble(const std::string& text, const std::string& stageRaw, const s
     const auto* begin = text.data();
     const auto* end = text.data() + text.size();
     const auto result = std::from_chars(begin, end, value);
-    if (result.ec != std::errc() || result.ptr != end) {
+    if (result.ec != std::errc() || result.ptr != end || !std::isfinite(value)) {
         throw std::invalid_argument("invalid pipeline stage '" + stageRaw + "': expected a " +
                                      "numeric value for " + what + ", got '" + text + "'");
     }

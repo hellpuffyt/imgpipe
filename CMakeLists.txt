@@ -55,9 +55,12 @@ target_link_libraries(imgpipe_core PUBLIC imgpipe_sanitizers)
 # ours to fix; relax warnings specifically for the translation unit that
 # includes them. -Wno-deprecated-declarations covers stb_image_write.h's
 # use of sprintf(), which only the macOS SDK (not glibc) marks deprecated.
+# -fwrapv: stb_image's JPEG IDCT can overflow signed int on corrupt input
+# (found by fuzzing under UBSan); wrapping is what that arithmetic assumes,
+# and -fwrapv makes it defined behaviour without modifying the vendored file.
 if(NOT MSVC)
   set_source_files_properties(src/image.cpp PROPERTIES
-    COMPILE_OPTIONS "-Wno-unused-function;-Wno-missing-field-initializers;-Wno-deprecated-declarations"
+    COMPILE_OPTIONS "-Wno-unused-function;-Wno-missing-field-initializers;-Wno-deprecated-declarations;-fwrapv"
   )
 endif()
 

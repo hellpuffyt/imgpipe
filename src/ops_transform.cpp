@@ -8,7 +8,9 @@ Image crop(const Image& src, int x, int y, int w, int h) {
     if (w <= 0 || h <= 0) {
         throw std::invalid_argument("crop: width/height must be positive");
     }
-    if (x < 0 || y < 0 || x + w > src.width() || y + h > src.height()) {
+    // Written as subtractions so that huge x/w or y/h cannot overflow int and slip past.
+    if (x < 0 || y < 0 || x > src.width() || y > src.height() || w > src.width() - x ||
+        h > src.height() - y) {
         throw std::invalid_argument("crop: rectangle out of bounds");
     }
     const int channels = src.channels();

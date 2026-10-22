@@ -2,8 +2,17 @@
 
 #include <algorithm>
 #include <cctype>
+#include <climits>
 #include <cstring>
+#include <fstream>
+#include <iterator>
 
+// Only the formats imgpipe documents are compiled in; this also keeps stb_image's
+// GIF/PSD/HDR/PIC/PNM decoders (and their attack surface) out of the binary.
+#define STBI_ONLY_PNG
+#define STBI_ONLY_JPEG
+#define STBI_ONLY_BMP
+#define STBI_ONLY_TGA
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
@@ -27,10 +36,34 @@ bool endsWithCaseInsensitive(const std::string& s, const std::string& suffix) {
 } // namespace
 
 Image loadImage(const std::string& path) {
+    // Read the file once and decode from memory, so the header that is checked against the
+    // size limit is the header that gets decoded.
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        throw std::runtime_error("loadImage: failed to open '" + path + "'");
+    }
+    const std::vector<char> bytes((std::istreambuf_iterator<char>(in)),
+                                  std::istreambuf_iterator<char>());
+    if (bytes.size() > static_cast<std::size_t>(INT_MAX)) {
+        throw std::runtime_error("loadImage: '" + path + "' is larger than 2 GiB");
+    }
+    const auto* buffer = reinterpret_cast<const stbi_uc*>(bytes.data());
+    const int length = static_cast<int>(bytes.size());
+
     int width = 0;
     int height = 0;
     int channels = 0;
-    std::uint8_t* raw = stbi_load(path.c_str(), &width, &height, &channels, 0);
+    if (stbi_info_from_memory(buffer, length, &width, &height, &channels) == 0) {
+        throw std::runtime_error("loadImage: failed to load '" + path + "': " +
+                                  stbi_failure_reason());
+    }
+    if (static_cast<long long>(width) * static_cast<long long>(height) > kMaxDecodedPixels) {
+        throw std::runtime_error("loadImage: '" + path + "' declares " + std::to_string(width) +
+                                  "x" + std::to_string(height) +
+                                  " pixels, above the decode limit of " +
+                                  std::to_string(kMaxDecodedPixels) + " pixels");
+    }
+    std::uint8_t* raw = stbi_load_from_memory(buffer, length, &width, &height, &channels, 0);
     if (raw == nullptr) {
         throw std::runtime_error("loadImage: failed to load '" + path + "': " +
                                   stbi_failure_reason());

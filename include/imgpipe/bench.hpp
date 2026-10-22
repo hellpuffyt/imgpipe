@@ -66,7 +66,9 @@ struct Regression {
 // Compares `current` against `baseline` stage by stage (matched by stageRaw
 // order). A stage regresses if its megapixels/second drops by more than
 // `thresholdPercent` relative to the baseline. Returns the list of
-// regressing stages (empty if none).
+// regressing stages (empty if none). Throws std::invalid_argument if the
+// baseline was recorded for a different pipeline (stage count or any stageRaw
+// differs), since a position-by-position comparison would then be meaningless.
 std::vector<Regression> compareToBaseline(const BenchReport& baseline, const BenchReport& current,
                                            double thresholdPercent);
 
