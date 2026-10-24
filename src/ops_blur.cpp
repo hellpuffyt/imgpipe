@@ -35,8 +35,12 @@ int clampIndex(int v, int lo, int hi) { return std::clamp(v, lo, hi); }
 } // namespace
 
 Image gaussianBlur(const Image& src, double sigma) {
-    if (sigma <= 0.0) {
-        throw std::invalid_argument("gaussianBlur: sigma must be > 0");
+    if (!std::isfinite(sigma) || sigma <= 0.0) {
+        throw std::invalid_argument("gaussianBlur: sigma must be a finite value > 0");
+    }
+    if (sigma > kMaxGaussianSigma) {
+        throw std::invalid_argument("gaussianBlur: sigma must be <= " +
+                                    std::to_string(static_cast<int>(kMaxGaussianSigma)));
     }
     if (src.empty()) {
         throw std::invalid_argument("gaussianBlur: source image is empty");

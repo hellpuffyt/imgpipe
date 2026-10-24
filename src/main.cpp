@@ -110,8 +110,10 @@ Args parseArgs(int argc, char** argv) {
             // that matters here.
             const auto result =
                 std::from_chars(value.data(), value.data() + value.size(), threshold);
-            if (result.ec != std::errc() || result.ptr != value.data() + value.size()) {
-                throw std::invalid_argument("invalid --threshold value '" + value + "'");
+            if (result.ec != std::errc() || result.ptr != value.data() + value.size() ||
+                !std::isfinite(threshold) || threshold < 0.0) {
+                throw std::invalid_argument("invalid --threshold value '" + value +
+                                            "' (expected a finite percentage >= 0)");
             }
             args.threshold = threshold;
         } else if (tok == "--help" || tok == "-h") {

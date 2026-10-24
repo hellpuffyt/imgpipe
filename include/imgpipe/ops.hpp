@@ -26,6 +26,9 @@ Image resize(const Image& src, int newWidth, int newHeight, ResizeMethod method)
 // vertical pass, each O(N * radius). Mathematically equivalent to a full 2D
 // convolution with the outer product of the two kernels, but O(radius)
 // instead of O(radius^2) per pixel. sigma must be > 0.
+// Upper bound on sigma (kernel radius 3*sigma); larger values are rejected rather than
+// overflowing the radius computation.
+inline constexpr double kMaxGaussianSigma = 1000.0;
 Image gaussianBlur(const Image& src, double sigma);
 
 // Converts to grayscale using ITU-R BT.709 luma weights

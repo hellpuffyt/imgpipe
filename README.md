@@ -37,7 +37,7 @@ that regresses against a stored baseline.
 | Stage | Syntax | Notes |
 |---|---|---|
 | Resize | `resize=WxH[:bilinear\|box]` | See sampling guidance below. If no method is given, box is auto-selected when either dimension shrinks, bilinear otherwise. |
-| Gaussian blur | `gaussian=SIGMA` | Separable: one horizontal 1D pass, one vertical 1D pass. |
+| Gaussian blur | `gaussian=SIGMA` | Separable: one horizontal 1D pass, one vertical 1D pass. `0 < SIGMA <= 1000`. |
 | Grayscale | `gray` | ITU-R BT.709 luma: `0.2126*R + 0.7152*G + 0.0722*B`. |
 | Brightness | `brightness=DELTA` | Additive, e.g. `-50`..`50`. |
 | Contrast | `contrast=FACTOR` | Multiplicative around the mid-grey pivot (127.5); `1.0` = no change. |
@@ -134,6 +134,8 @@ imgpipe --in photo.png --out out.png \
 imgpipe --in photo.png --ops "resize=1920x1440:box,gaussian=2.0,gray" --bench
 
 # Save a baseline, then fail CI if a later change regresses more than 15%
+# (--bench-out does not create directories)
+mkdir -p benchmarks
 imgpipe --in photo.png --ops "resize=1920x1440:box,gaussian=2.0" --bench \
   --bench-out benchmarks/baseline.json
 imgpipe --in photo.png --ops "resize=1920x1440:box,gaussian=2.0" --bench \
@@ -188,7 +190,8 @@ the comparison when its throughput is unmeasurable, rather than comparing
 against, or reporting a regression against, a number that isn't real.
 
 Use `--bench --bench-out` to capture your own baseline and `--baseline` to
-gate future changes against it; because run-to-run variance on a shared or
+gate future changes against it (the baseline must have been recorded with
+the same `--ops` pipeline; otherwise the run fails with an error); because run-to-run variance on a shared or
 virtualized machine (like a CI runner) can easily exceed 15-20% on fast,
 small stages, pick `--threshold` with that noise floor in mind rather than
 treating it as a tight tolerance.
@@ -199,7 +202,7 @@ treating it as a tight tolerance.
 ctest --test-dir build --output-on-failure
 ```
 
-64 test cases, 1506 assertions, run via a small hand-rolled harness (see
+78 test cases, 2620 assertions, run via a small hand-rolled harness (see
 [Why not Catch2](#why-a-hand-rolled-test-harness) below) driven through a
 single CTest entry point. Coverage includes:
 
@@ -225,8 +228,13 @@ single CTest entry point. Coverage includes:
   `--ops` syntax (missing values, non-numeric arguments, unknown stage
   names, out-of-bounds crops) are covered explicitly.
 - `bench.hpp`'s JSON serialization round-trips exactly, and its baseline
-  comparison correctly flags a synthetic regression above threshold and
-  ignores one below it.
+  comparison correctly flags a synthetic regression above threshold, ignores
+  one below it, and refuses a baseline recorded for a different pipeline.
+- Every supported format round-trips through `saveImage`/`loadImage`, and
+  truncated (every prefix length) and byte-corrupted PNG/JPEG/BMP/TGA files,
+  headers that declare huge dimensions, `crop` rectangles that overflow
+  `int`, and `nan`/`inf` parameters all fail cleanly with an error instead of
+  crashing (`tests/test_hardening.cpp`).
 
 CI additionally runs the full suite under AddressSanitizer +
 UndefinedBehaviorSanitizer -- the check that matters most for image code
@@ -255,10 +263,9 @@ This project vendors two single-header libraries from
 Both are dual-licensed by their author (Sean Barrett and contributors)
 under your choice of the MIT License or the Unlicense (public domain); the
 full license text is preserved at the top of each vendored file. No
-modifications have been made to either file beyond the two `#define
-STB_IMAGE*_IMPLEMENTATION` lines that select translation-unit-local
-compilation, which live in `src/image.cpp`, not in the vendored files
-themselves.
+modifications have been made to either file. `src/image.cpp` selects the
+implementation with the `#define STB_IMAGE*_IMPLEMENTATION` lines and compiles
+in only the PNG/JPEG/BMP/TGA decoders (`STBI_ONLY_*`).
 
 ## Security
 
@@ -271,10 +278,18 @@ themselves.
 - Command-line pipeline parsing rejects malformed input with a descriptive
   error rather than guessing; it never executes or evaluates the spec text
   as code.
+- Only the PNG, JPEG, BMP and TGA decoders are compiled in. The image header
+  is checked before decoding: anything above 256 megapixels is rejected, and
+  no image buffer may exceed 2 GiB. That still allows a single legitimate
+  decode of up to ~1 GiB (256 Mpx RGBA), plus one copy per pipeline stage.
+- Numeric stage parameters must be finite; `gaussian` sigma is capped at
+  1000; `crop` bounds are checked without integer overflow.
 - Decoding untrusted image files still goes through `stb_image`, a
-  widely-used but not formally hardened decoder; don't feed it files from
-  untrusted sources in a security-sensitive context without additional
-  sandboxing.
+  widely-used but not formally hardened decoder. The test suite feeds it
+  truncated and corrupted files under ASan/UBSan, but that is not a security
+  audit; don't feed it files from untrusted sources in a security-sensitive
+  context without additional sandboxing.
+- Report vulnerabilities privately: see [SECURITY.md](SECURITY.md).
 
 ## License
 

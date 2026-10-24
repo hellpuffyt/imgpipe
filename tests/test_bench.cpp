@@ -125,3 +125,20 @@ IMGPIPE_TEST(bench_compareToBaseline_skips_when_current_is_nonfinite) {
     auto regressions = bench::compareToBaseline(baseline, unmeasurableCurrent, 15.0);
     CHECK(regressions.empty());
 }
+
+// Regression: a baseline recorded for a different pipeline (or an empty one)
+// was compared stage-by-position or silently skipped, so the gate could pass
+// without checking anything.
+IMGPIPE_TEST(bench_compareToBaseline_rejects_mismatched_pipeline) {
+    bench::BenchReport baseline;
+    baseline.stages.push_back(bench::StageResult{"gray", 0.01, 100.0, 1000, 1000});
+    bench::BenchReport current;
+    current.stages.push_back(bench::StageResult{"gaussian=2.0", 0.01, 100.0, 1000, 1000});
+    CHECK_THROWS(bench::compareToBaseline(baseline, current, 15.0));
+
+    bench::BenchReport empty;
+    CHECK_THROWS(bench::compareToBaseline(empty, current, 15.0));
+
+    current.stages.push_back(bench::StageResult{"gray", 0.01, 100.0, 1000, 1000});
+    CHECK_THROWS(bench::compareToBaseline(baseline, current, 15.0));
+}

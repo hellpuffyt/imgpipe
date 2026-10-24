@@ -135,8 +135,25 @@ std::string toJson(const BenchReport& report) {
 
 std::vector<Regression> compareToBaseline(const BenchReport& baseline, const BenchReport& current,
                                            double thresholdPercent) {
+    // Stages are compared by position, so the baseline is only meaningful for the same
+    // pipeline. A mismatch used to be compared stage-by-position anyway (or, with an empty
+    // or shorter baseline, silently skipped), which could pass a gate that checked nothing.
+    if (baseline.stages.size() != current.stages.size()) {
+        throw std::invalid_argument(
+            "baseline has " + std::to_string(baseline.stages.size()) +
+            " stage(s) but this run has " + std::to_string(current.stages.size()) +
+            "; record a new baseline for this --ops pipeline");
+    }
+    for (std::size_t i = 0; i < baseline.stages.size(); ++i) {
+        if (baseline.stages[i].stageRaw != current.stages[i].stageRaw) {
+            throw std::invalid_argument("baseline stage " + std::to_string(i + 1) + " is '" +
+                                        baseline.stages[i].stageRaw + "' but this run has '" +
+                                        current.stages[i].stageRaw +
+                                        "'; record a new baseline for this --ops pipeline");
+        }
+    }
     std::vector<Regression> regressions;
-    const std::size_t n = std::min(baseline.stages.size(), current.stages.size());
+    const std::size_t n = baseline.stages.size();
     for (std::size_t i = 0; i < n; ++i) {
         const StageResult& b = baseline.stages[i];
         const StageResult& c = current.stages[i];

@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `crop=X:Y:W:H` with values near `INT_MAX` overflowed `x + w` / `y + h`,
+  passed the bounds check and read out of bounds (SIGBUS in a release build,
+  reported by UBSan). The check no longer overflows.
+- `gaussian=SIGMA` with `nan`, `inf` or a huge sigma converted a non-finite
+  or out-of-range double to `int` (undefined behaviour). Every numeric stage
+  parameter must now be finite, `--threshold` must be a finite value `>= 0`
+  (a `nan` threshold made the regression gate always pass), and sigma is
+  capped at 1000.
+- A tiny image file whose header declared enormous dimensions was "decoded"
+  into gigabytes of memory (stb_image pads missing rows); found by fuzzing a
+  2.6 KB BMP that allocated about 2 GB. Headers are now checked before
+  decoding and images above 256 megapixels are rejected.
+- `Image` dimensions are validated before allocating (a negative size
+  previously surfaced as `std::bad_alloc`/`vector` errors), images whose
+  buffer would exceed 2 GiB are rejected with a clear message, and pixel
+  offsets are computed in `std::size_t`.
+- stb_image's JPEG IDCT overflowed signed `int` on a corrupt file (UBSan);
+  `src/image.cpp` is now compiled with `-fwrapv`, which makes that arithmetic
+  defined without modifying the vendored header.
+- `--baseline` with a baseline recorded for a different `--ops` pipeline (or
+  an empty one) was compared stage-by-position or silently skipped; it is now
+  an error that names the mismatching stage.
+
+### Security
+
+- Only the PNG, JPEG, BMP and TGA decoders are compiled into the binary
+  (`STBI_ONLY_*`), matching the documented formats; GIF, PSD, HDR, PIC and
+  PNM input is now rejected.
+
+### Added
+
+- `tests/test_hardening.cpp`: truncated and corrupted inputs for every
+  supported format, oversized headers, overflow and non-finite parameter
+  regressions. `SECURITY.md`, `.editorconfig`, `docs/PRODUCTION_READINESS.md`.
+
+### Fixed (earlier)
+
 - Pipeline stage numeric parsing (`gaussian=2.0`, `contrast=1.1`, `--threshold`,
   and the benchmark JSON reader) used `std::stod`/`std::stoi`, which defer to
   the C library's `strtod`/`strtol` and are therefore sensitive to the
