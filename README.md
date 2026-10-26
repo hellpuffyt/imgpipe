@@ -1,20 +1,50 @@
 # imgpipe
 
-A small, dependency-light C++20 image processing pipeline: resize, blur,
-convert, and chain operations from the command line -- and measure exactly
-how fast each stage runs, so a change that makes it slower is visible in CI
-rather than discovered in production.
+A small C++20 command-line image pipeline: resize, blur, convert and chain
+operations, then measure how fast each stage runs and optionally fail the run
+when a stage is slower than a stored baseline.
+
+**Status:** a working CLI at version 0.1.0, with no packaged releases; build it
+from source. CI builds and tests it with GCC and Clang on Ubuntu and macOS,
+including an AddressSanitizer + UBSan run. Windows/MSVC is not tested. The
+repository's CI runs the test suite but not the benchmark gate.
+
+## Demo
+
+<img src="docs/screenshots/pipeline-and-bench.webp" width="100%" alt="Terminal capture: imgpipe resizes a 4000x3000 PNG to an 800x600 single-channel thumbnail, then a --bench run prints per-stage throughput in megapixels per second, total wall time and peak resident memory.">
+
+*Terminal capture on macOS (Apple Clang, release build). `photo.png` is a
+synthetic 4000x3000 RGB gradient.*
+
+<img src="docs/screenshots/baseline-regression-gate.webp" width="100%" alt="Terminal capture: imgpipe records a benchmark baseline, passes a rerun at a 15% threshold, then fails a rerun at a 0% threshold with 'Performance regression detected' and exit status 2.">
+
+*Terminal capture: record a baseline, pass a rerun at `--threshold 15`, fail a
+rerun at `--threshold 0` with exit status 2. The large swings between runs of
+the same binary on the same machine are real, which is why the threshold should
+sit above your noise floor.*
+
+```console
+$ imgpipe --in photo.png --out thumb.png --ops "resize=800x600,gray"
+Wrote thumb.png (800x600, 1 channels)
+
+$ imgpipe --in photo.png --ops "resize=1920x1440:box,gaussian=2.0,gray" --bench
+Stage throughput (input megapixels/second):
+  resize=1920x1440:box: 52.8694 Mpix/s (226.974 ms, input 4000x3000)
+  gaussian=2.0: 12.6992 Mpix/s (217.714 ms, input 1920x1440)
+  gray: 558.545 Mpix/s (4.95 ms, input 1920x1440)
+Total wall time: 449.657 ms
+Peak resident memory: 98.1562 MiB
+```
 
 ## What
 
 `imgpipe` reads a PNG/JPEG/BMP/TGA image, runs it through a chain of
 operations you specify on the command line, and writes the result back out.
-Each operation is implemented from scratch against `std::vector<uint8_t>` --
-no OpenCV, no ImageMagick, no Boost. The only third-party code is the
+Each operation is implemented from scratch against `std::vector<uint8_t>`,
+with no OpenCV, ImageMagick or Boost. The only third-party code is the
 single-header `stb_image` / `stb_image_write` decoders (see
-[Third-party licenses](#third-party-licenses)); every actual image
-transform -- resampling, convolution, color math -- is this project's own
-code.
+[Third-party licenses](#third-party-licenses)). Resampling, convolution and
+colour math are this project's own code.
 
 ```
 imgpipe --in photo.png --out thumb.png \
@@ -38,7 +68,7 @@ that regresses against a stored baseline.
 |---|---|---|
 | Resize | `resize=WxH[:bilinear\|box]` | See sampling guidance below. If no method is given, box is auto-selected when either dimension shrinks, bilinear otherwise. |
 | Gaussian blur | `gaussian=SIGMA` | Separable: one horizontal 1D pass, one vertical 1D pass. `0 < SIGMA <= 1000`. |
-| Grayscale | `gray` | ITU-R BT.709 luma: `0.2126*R + 0.7152*G + 0.0722*B`. |
+| Grayscale | `gray` | ITU-R BT.709 luma: `0.2126*R + 0.7152*G + 0.0722*B`. The result has one channel. |
 | Brightness | `brightness=DELTA` | Additive, e.g. `-50`..`50`. |
 | Contrast | `contrast=FACTOR` | Multiplicative around the mid-grey pivot (127.5); `1.0` = no change. |
 | Convolution | `convolve=sharpen\|edge\|k0:...:k8` | 3x3 kernel (colon-separated for a custom kernel, since commas separate pipeline stages). Border pixels are edge-clamped. |
@@ -53,7 +83,7 @@ pixel that contributes to a destination pixel, weighted by area of overlap.
 That is the statistically correct thing to do when many source pixels
 collapse onto one destination pixel, and it's what avoids moire/aliasing
 artifacts. Bilinear sampling, by contrast, only looks at a 2x2 neighborhood
-around a single sample point when downscaling -- it throws away most of the
+around a single sample point when downscaling, so it throws away most of the
 source data, and the result depends heavily on exactly where that sample
 point happens to land. `tests/test_resize.cpp` has a test
 (`resize_box_vs_bilinear_aliasing_on_checkerboard`) that demonstrates this
@@ -84,15 +114,18 @@ tests/          Hand-rolled test harness + CTest integration
 
 `Image` owns a single `std::vector<std::uint8_t>` (row-major, interleaved
 channels) and never uses raw `new`/`delete`. Every operation is a pure
-function taking `const Image&` and returning a new `Image` -- no in-place
-mutation, no aliasing hazards, no ownership questions. `pipeline.hpp` parses
+function taking `const Image&` and returning a new `Image`, so there is no
+in-place mutation and no aliasing between stages. `pipeline.hpp` parses
 the `--ops` command-line spec into a list of stages and applies them via
 `ops.hpp` in order, with syntax validation that names the failing stage.
 `bench.hpp` reuses the same stage list to time each one individually.
 
 ## Building
 
-Requires CMake >= 3.16 and a C++20 compiler (GCC >= 11 or Clang >= 14).
+Requires CMake 3.16 or newer and a C++20 compiler. GCC 11+ or Clang 14+ should
+work; CI uses the default GCC and Clang on `ubuntu-latest`, Apple Clang and
+GCC 14 on `macos-latest`. `CMakeLists.txt` has MSVC flags, but Windows is not
+built in CI.
 
 ```
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -102,8 +135,8 @@ ctest --test-dir build --output-on-failure
 
 Build options (all `-D<NAME>=ON/OFF`):
 
-- `IMGPIPE_WARNINGS_AS_ERRORS` (default `ON`) -- `-Wall -Wextra -Wpedantic -Werror`
-- `IMGPIPE_ENABLE_SANITIZERS` (default `OFF`) -- `-fsanitize=address,undefined`
+- `IMGPIPE_WARNINGS_AS_ERRORS` (default `ON`): `-Wall -Wextra -Wpedantic -Werror`
+- `IMGPIPE_ENABLE_SANITIZERS` (default `OFF`): `-fsanitize=address,undefined`
 - `IMGPIPE_BUILD_TESTS` (default `ON`)
 
 Sanitizer build:
@@ -144,10 +177,18 @@ imgpipe --in photo.png --ops "resize=1920x1440:box,gaussian=2.0" --bench \
 
 `imgpipe --help` prints the full option and stage reference.
 
+Input formats are PNG, JPEG, BMP and TGA. The `--out` extension picks the
+output format: `.png`, `.bmp`, `.tga`, or `.jpg`/`.jpeg` (written at quality
+90). `--threshold` defaults to 15.
+
+Exit codes: `0` success, `1` an error (bad arguments, an invalid stage, an
+unreadable or unsupported file, a baseline recorded for a different pipeline),
+`2` a benchmark regression beyond `--threshold`. Running `imgpipe` with no
+arguments prints the usage and exits `1`.
+
 ## Benchmarks
 
-Measured with the release build (`-O3`) inside the project's `gcc:14` Docker
-build container, on a synthetic 4000x3000 RGB gradient image, running the
+Measured with the release build (`-O3`) inside a `gcc:14` Docker container, on a synthetic 4000x3000 RGB gradient image, running the
 pipeline `resize=1920x1440:box,gaussian=2.0,gray,brightness=10,contrast=1.1,convolve=sharpen,flip=h,rotate=90`:
 
 | Stage | Input size | Time | Throughput |
@@ -163,20 +204,20 @@ pipeline `resize=1920x1440:box,gaussian=2.0,gray,brightness=10,contrast=1.1,conv
 
 Total wall time: 373.6 ms. Peak resident memory: 80.1 MiB.
 
-These numbers are what one Docker container run produced, not aspirational
-figures -- expect variance run to run and machine to machine (a second run
-against the same baseline in the same container showed several stages 15-30%
-off from these, purely from container scheduling noise, not a real
-regression -- see the note on `--threshold` below). The Gaussian blur is
+These numbers are what one Docker container run produced. Expect variance
+from run to run and machine to machine: a second run against the same baseline
+in the same container showed several stages 15-30% off from these, purely from
+scheduling noise (see the note on `--threshold` below). The demo captures above
+show the same effect on a laptop. The Gaussian blur is
 deliberately the slowest per-pixel stage here (radius scales with sigma, and
 this run uses sigma=2.0, i.e. a 13-pixel-wide 1D kernel run twice); that's
 the separable algorithm doing real work, not a regression.
 
 **How a stage is timed.** Each stage is timed individually with a monotonic
 clock. If a single application completes in well under a couple of
-milliseconds -- a small image, a cheap stage, a fast machine, or just a
-clock with coarse resolution -- that one sample is dominated by measurement
-noise, not the stage's actual cost. So imgpipe re-applies the stage
+milliseconds (a small image, a cheap stage, a fast machine, or a clock with
+coarse resolution), that one sample is dominated by measurement noise, not the
+stage's actual cost. So imgpipe re-applies the stage
 (discarding all but the last result, to keep the pipeline's output correct)
 until the *cumulative* elapsed time clears a 2 ms floor, and reports the
 per-application average over that batch. `wallSeconds` and
@@ -184,8 +225,8 @@ per-application average over that batch. `wallSeconds` and
 over one or more real, summed measurements, never a single sub-tick sample.
 If even that fails to clear the floor, the stage's throughput is reported as
 `null` in JSON (there is no JSON infinity/NaN literal) and printed as
-`(unmeasurable)` on the console -- never as a fabricated number, and never
-as "infinitely fast". `compareToBaseline` skips a stage on either side of
+`(unmeasurable)` on the console, never as a made-up number or as "infinitely
+fast". `compareToBaseline` skips a stage on either side of
 the comparison when its throughput is unmeasurable, rather than comparing
 against, or reporting a regression against, a number that isn't real.
 
@@ -214,8 +255,8 @@ single CTest entry point. Coverage includes:
   does, demonstrating the aliasing box sampling avoids.
 - The separable two-pass Gaussian blur is checked pixel-by-pixel against an
   unoptimized direct 2D convolution using the same kernel, within +/-1
-  intensity level -- the test that proves the O(N*radius) optimization is
-  numerically correct, not just fast.
+  intensity level. This is the test that shows the O(N*radius) optimization
+  is numerically correct, not just fast.
 - Grayscale of a pure red/green/blue pixel matches the BT.709 weights
   exactly (e.g. red -> `0.2126 * 255`), and is checked to differ from a
   naive `(R+G+B)/3` average.
@@ -236,9 +277,9 @@ single CTest entry point. Coverage includes:
   `int`, and `nan`/`inf` parameters all fail cleanly with an error instead of
   crashing (`tests/test_hardening.cpp`).
 
-CI additionally runs the full suite under AddressSanitizer +
-UndefinedBehaviorSanitizer -- the check that matters most for image code
-doing per-pixel index arithmetic -- and a dedicated `-Werror` build.
+CI also runs the full suite under AddressSanitizer +
+UndefinedBehaviorSanitizer, which matters most for image code doing per-pixel
+index arithmetic, and a dedicated `-Werror` build.
 
 ### Why a hand-rolled test harness
 
@@ -257,8 +298,8 @@ the test plan above needed.
 This project vendors two single-header libraries from
 [nothings/stb](https://github.com/nothings/stb) under `third_party/stb/`:
 
-- `stb_image.h` -- image loading (PNG/JPEG/BMP/TGA/etc.)
-- `stb_image_write.h` -- image writing (PNG/BMP/TGA/JPEG)
+- `stb_image.h`: image loading (PNG/JPEG/BMP/TGA/etc.)
+- `stb_image_write.h`: image writing (PNG/BMP/TGA/JPEG)
 
 Both are dual-licensed by their author (Sean Barrett and contributors)
 under your choice of the MIT License or the Unlicense (public domain); the
@@ -290,6 +331,10 @@ in only the PNG/JPEG/BMP/TGA decoders (`STBI_ONLY_*`).
   audit; don't feed it files from untrusted sources in a security-sensitive
   context without additional sandboxing.
 - Report vulnerabilities privately: see [SECURITY.md](SECURITY.md).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
